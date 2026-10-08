@@ -1,0 +1,44 @@
+name: jp-edinet
+version: 0.1.0
+manifest_version: 2
+# hermes plugins install accepts manifest_version 2 from v0.21.4.
+requires_hermes: ">=0.21.4"
+description: >-
+  Japanese corporate filings for Hermes Agent, built on the EDINET API v2
+  (有価証券報告書 and other disclosures). Search by company name, securities
+  code, EDINET code or corporate number over a required file-date range
+  (date_from/date_to); extract headline financials from the CSV ZIP with units
+  and accounting standard; save PDF/ZIP into Hermes cache.
+author: TakeshiTGAL
+license: MIT
+homepage: https://github.com/TakeshiTGAL/hermes-plugin-edinet
+tags: [edinet, japan, filings, finance, disclosure, xbrl]
+
+provides_tools:
+  - edinet_search_filings
+  - edinet_financials
+  - edinet_save_document
+
+requires_env:
+  - name: EDINET_API_KEY
+    description: >-
+      EDINET API key (free). Start from FSA WEEK0060 (API materials index), then
+      follow the linked API specification PDF for account creation and key issue.
+    url: https://disclosure2dl.edinet-fsa.go.jp/guide/static/disclosure/WEEK0060.html
+    secret: true
+
+config_schema:
+  max_calendar_days:
+    type: int
+    default: 31
+    minimum: 1
+    maximum: 31
+    label: Max calendar days per search
+    description: >-
+      Plugin hard cap on inclusive file-date span for edinet_search_filings
+      (1–31; absolute maximum 31). Live EDINET GETs share a process-wide ≥1s
+      interval under a 180s per-call budget; the cap limits span size but does
+      not promise a cold full-span search always finishes. Tool arguments are
+      clamped with min(arg, this value) and cannot raise the cap; config values
+      above 31 are also clamped to 31. Ranges over the effective limit return an
+      error with next_step (never silent truncate of the date window).
