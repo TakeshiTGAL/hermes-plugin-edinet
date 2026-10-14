@@ -1,8 +1,9 @@
 name: jp-edinet
-version: 0.1.0
+version: 0.1.1
 manifest_version: 2
-# hermes plugins install accepts manifest_version 2 from v0.21.4.
-requires_hermes: ">=0.21.4"
+# manifest_version 2 is accepted from Hermes v0.21.4.
+# The catalog entry already on main requires >=0.21.6. Do not declare a lower floor.
+requires_hermes: ">=0.21.6"
 description: >-
   Japanese corporate filings for Hermes Agent, built on the EDINET API v2
   (有価証券報告書 and other disclosures). Search by company name, securities

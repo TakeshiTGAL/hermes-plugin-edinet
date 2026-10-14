@@ -24,7 +24,7 @@ Those yen figures match the yuho PDF lines「営業収益」/「総資産」in t
    Once listed in the Hermes plugin catalog, `hermes plugins install jp-edinet --enable` works too. For a local clone: `hermes plugins install "file://$PWD" --enable`.
 3. Start a new Hermes session and ask about a listed company's filing.
 
-Works with Hermes Agent **0.21.4** or later (`manifest_version: 2`).
+Works with Hermes Agent **0.21.6** or later (`requires_hermes: >=0.21.6`, the same floor as the catalog entry already on main). This version was tested on Hermes 0.21.4 and later. Hermes 0.21.4 and 0.21.5 will not load version 0.1.1. Version 0.1.0's manifest allowed `>=0.21.4`.
 
 ## Tools
 
@@ -50,7 +50,7 @@ In prose only (no hard dependency): resolve a legal entity with **jp-corporate**
 
 1. Open the FSA EDINET API materials index (WEEK0060): <https://disclosure2dl.edinet-fsa.go.jp/guide/static/disclosure/WEEK0060.html>
 2. Follow the linked API specification PDF for account creation and key issue.
-3. Paste it when `hermes plugins install` asks for `EDINET_API_KEY`, or add `EDINET_API_KEY=<your key>` to the Hermes home `.env`.
+3. Paste it when `hermes plugins install` asks for `EDINET_API_KEY`, or add `EDINET_API_KEY=<your key>` to the Hermes home `.env`. Each profile needs the key in that profile's `.env`. A profile without the key cannot call EDINET, even when another profile has it.
 
 ## Citation and terms
 
@@ -67,7 +67,7 @@ API terms forbid abusive burst traffic. The client talks only to `api.edinet-fsa
 ## Security and privacy
 
 - Tools are read-only against EDINET; saved files go only under `<HERMES_HOME>/plugin-data/jp-edinet/` (per Hermes profile).
-- HTTPS to `api.edinet-fsa.go.jp` only. The API key is sent in the URL as `Subscription-Key`.
+- HTTPS to `api.edinet-fsa.go.jp` only. The API key is sent in the URL as `Subscription-Key`. A proxy set in the environment is not used, so the API key is not sent to it. A machine that can reach the network only through a proxy can no longer reach EDINET.
 - Python standard library only; no `python_dependencies`.
 - No telemetry.
 
@@ -97,7 +97,7 @@ Install the plugin with `hermes plugins install` (see above). The offline tests 
 python -m pytest -q
 ```
 
-Tests replay fixtures in `tests/fixtures/` (see that folder's README). Before publishing a pin: `hermes plugins validate . --install-deps`. On Hermes 0.21.4 (tag v2026.9.21) that prints `Validation passed` and `security scan — safe`. `no core override` is printed by current main, not by 0.21.4.
+Without Hermes installed, the four tests that call the real `agent.secret_scope` are skipped. The rest run offline and do not call EDINET. Tests replay fixtures in `tests/fixtures/` (see that folder's README). Before publishing a pin: `hermes plugins validate . --install-deps`. On Hermes 0.21.4 (tag v2026.9.21) that prints `Validation passed` and `security scan — safe`. `no core override` is printed by current main, not by 0.21.4. That check parses the manifest. Version 0.1.1 still does not load on Hermes older than 0.21.6.
 
 ## License
 
@@ -112,7 +112,7 @@ MIT — see `LICENSE` and `NOTICE`.
 
 1. EDINET API キーを発行する（[API 資料一覧 WEEK0060](https://disclosure2dl.edinet-fsa.go.jp/guide/static/disclosure/WEEK0060.html) から仕様書 PDF の手順へ）。API キーはリクエスト URL の `Subscription-Key` として送られます（エラーと JSON には出しません）。
 2. `hermes plugins install TakeshiTGAL/hermes-plugin-edinet --enable`（カタログ掲載後は `jp-edinet` でも可）。
-3. セッションを開き直して質問する。
+3. セッションを開き直して質問する。対応する Hermes は 0.21.6 以降です。0.21.4 と 0.21.5 では版 0.1.1 は読み込まれません（0.1.0 の manifest は `>=0.21.4` でした）。この版は Hermes 0.21.4 以降で試しています。環境のプロキシは使わないので、プロキシ経由でしか外へ出られない環境では EDINET に届きません。プロファイルが複数あるときは、それぞれの `.env` に `EDINET_API_KEY` が要ります。
 
 ### ツール
 

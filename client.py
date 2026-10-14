@@ -14,7 +14,6 @@ from __future__ import annotations
 import contextlib
 import contextvars
 import json
-import os
 import re
 import threading
 import time
@@ -56,7 +55,8 @@ API_KEY_STEPS = (
 
 
 def _api_key() -> str:
-    value = os.environ.get(API_KEY_ENV, "").strip()
+    from agent.secret_scope import get_secret
+    value = (get_secret(API_KEY_ENV) or "").strip()
     if not value:
         raise ApiKeyError(
             f"{API_KEY_ENV} is not set, so EDINET cannot be queried.",
@@ -68,7 +68,9 @@ def _api_key() -> str:
 def scrub_secret(text: str, secret: str = "") -> str:
     """Remove the API key (and Subscription-Key=… query fragments) from text."""
     text = str(text)
-    secret = secret or os.environ.get(API_KEY_ENV, "").strip()
+    if not secret:
+        from agent.secret_scope import get_secret
+        secret = (get_secret(API_KEY_ENV) or "").strip()
     if secret:
         text = text.replace(secret, "***")
         text = text.replace(urllib.parse.quote(secret, safe=""), "***")
@@ -261,7 +263,9 @@ class _SameHostRedirects(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-_opener = urllib.request.build_opener(_SameHostRedirects)
+def _build_opener():
+    """Ignore a proxy from the environment so the API key is not sent to it."""
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}), _SameHostRedirects)
 
 
 def _timeout() -> float:
@@ -315,7 +319,7 @@ def _http_get_bytes(
         headers={"User-Agent": USER_AGENT, "Accept": "*/*"},
     )
     try:
-        with _opener.open(request, timeout=_timeout()) as response:
+        with _build_opener().open(request, timeout=_timeout()) as response:
             raw = _read_capped(response)
     except EdinetError:
         raise

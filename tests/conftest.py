@@ -5,11 +5,17 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
+import socket
 import sys
+import types
 import zipfile
 from pathlib import Path
 
 import pytest
+
+# Offline stand-in for agent.secret_scope. Real Hermes tests must not treat this as the product module.
+_STUB_ATTR = "_jp_edinet_offline_stub"
 
 PLUGIN_DIR = Path(__file__).resolve().parent.parent
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -48,9 +54,78 @@ def _minimal_zip_bytes() -> bytes:
     return buf.getvalue()
 
 
-@pytest.fixture(scope="session")
-def plugin():
-    return sys.modules.get(PACKAGE) or _load_plugin()
+def _offline_secret_scope():
+    """Environ stand-in used only when Hermes is not installed.
+
+    Same shape as hermes-plugin-index-search e3303f6 (tests/test_acceptance.py):
+    get_secret reads the process environment, and the scope helpers are no-ops.
+    """
+    scope = types.ModuleType("agent.secret_scope")
+
+    def get_secret(name, default=None):
+        value = os.environ.get(name)
+        return default if value is None else value
+
+    scope.get_secret = get_secret
+    scope.UnscopedSecretError = type("UnscopedSecretError", (RuntimeError,), {})
+    scope.set_secret_scope = lambda mapping: None
+    scope.reset_secret_scope = lambda token: None
+    scope.set_multiplex_active = lambda active: None
+    setattr(scope, _STUB_ATTR, True)
+    return scope
+
+
+def _ensure_offline_secret_scope() -> bool:
+    """Install the stand-in only when the real agent.secret_scope cannot be imported."""
+    existing = sys.modules.get("agent.secret_scope")
+    if existing is not None and not getattr(existing, _STUB_ATTR, False):
+        return False
+    try:
+        import agent.secret_scope as real
+    except ImportError:
+        real = None
+    if real is not None and not getattr(real, _STUB_ATTR, False):
+        return False
+    if existing is not None and getattr(existing, _STUB_ATTR, False):
+        scope = existing
+    else:
+        scope = _offline_secret_scope()
+    agent = sys.modules.get("agent")
+    if agent is None:
+        agent = types.ModuleType("agent")
+        sys.modules["agent"] = agent
+    sys.modules["agent.secret_scope"] = scope
+    setattr(agent, "secret_scope", scope)
+    return True
+
+
+def _drop_offline_secret_scope() -> None:
+    scope = sys.modules.get("agent.secret_scope")
+    if scope is None or not getattr(scope, _STUB_ATTR, False):
+        return
+    sys.modules.pop("agent.secret_scope", None)
+    agent = sys.modules.get("agent")
+    if agent is not None and getattr(agent, "secret_scope", None) is scope:
+        delattr(agent, "secret_scope")
+
+
+@pytest.fixture
+def plugin(request):
+    """Load the plugin. Without Hermes, install the secret-scope stand-in.
+
+    Tests marked needs_real_scope keep pytest.importorskip on the real module
+    and do not run against the stand-in.
+    """
+    if request.node.get_closest_marker("needs_real_scope"):
+        scope = pytest.importorskip("agent.secret_scope")
+        if getattr(scope, _STUB_ATTR, False):
+            pytest.skip("real agent.secret_scope is required")
+    else:
+        _ensure_offline_secret_scope()
+    try:
+        yield sys.modules.get(PACKAGE) or _load_plugin()
+    finally:
+        _drop_offline_secret_scope()
 
 
 @pytest.fixture(autouse=True)
@@ -105,9 +180,59 @@ def _stub_plugin_data_dir(_isolate_hermes_home):
 
 
 @pytest.fixture(autouse=True)
+def _block_network(monkeypatch):
+    """No test may open a real socket. EDINET is replayed from fixtures."""
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("a test tried to open a real network connection")
+
+    monkeypatch.setattr(socket, "create_connection", refuse)
+    monkeypatch.setattr(socket.socket, "connect", refuse)
+
+
+@pytest.fixture(autouse=True)
+def _reset_secret_scope():
+    """Drop a scope left by another test. Offline runs have no secret_scope module."""
+    scope = sys.modules.get("agent.secret_scope")
+    if scope is None:
+        yield
+        return
+    scope.set_multiplex_active(False)
+    token = scope.set_secret_scope(None)
+    try:
+        yield
+    finally:
+        try:
+            scope.reset_secret_scope(token)
+        except ValueError:
+            pass
+        scope.set_secret_scope(None)
+        scope.set_multiplex_active(False)
+
+
+@pytest.fixture(autouse=True)
 def _stub_hermes_write_guard():
-    """Offline tests run outside Hermes; provide an allow-all write guard stub."""
+    """Offline tests run outside Hermes; provide an allow-all write guard stub.
+
+    When Hermes is installed, keep that package so agent.secret_scope stays importable.
+    """
     import types
+
+    real_fs = None
+    previous_guard = None
+    try:
+        import agent.file_safety as real_fs
+        import agent.secret_scope  # noqa: F401
+    except Exception:
+        real_fs = None
+    if real_fs is not None and getattr(sys.modules.get("agent"), "__path__", None):
+        previous_guard = real_fs.get_write_denied_error
+        real_fs.get_write_denied_error = lambda path, **kwargs: None
+        try:
+            yield
+        finally:
+            real_fs.get_write_denied_error = previous_guard
+        return
 
     previous_agent = sys.modules.get("agent")
     previous_fs = sys.modules.get("agent.file_safety")

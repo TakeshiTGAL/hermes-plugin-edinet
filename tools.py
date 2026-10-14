@@ -57,6 +57,8 @@ def _guard(handler):
         except EdinetError as error:
             return _dump(error.to_dict())
         except Exception as error:  # never crash the agent
+            if type(error).__module__ == "agent.secret_scope" and type(error).__name__ == "UnscopedSecretError":
+                raise
             detail = client.scrub(f"{type(error).__name__}: {error}")
             return _dump(
                 {

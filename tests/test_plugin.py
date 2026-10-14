@@ -78,7 +78,7 @@ def test_manifest_matches_registration(plugin):
     plugin.register(Ctx())
     assert manifest["name"] == "jp-edinet"
     assert manifest["manifest_version"] == 2
-    assert manifest["requires_hermes"] == ">=0.21.4"
+    assert manifest["requires_hermes"] == ">=0.21.6"
     assert manifest["provides_tools"] == list(registered)
     assert [e["name"] for e in manifest["requires_env"]] == ["EDINET_API_KEY"]
     assert all(e.get("secret") for e in manifest["requires_env"])
@@ -1541,3 +1541,152 @@ def test_sudden_zero_warns_until_rows_return(plugin, monkeypatch, run):
     )
     assert fourth["count"] >= 1
     assert not any("dropped from" in w for w in fourth.get("warnings") or [])
+
+
+_MISSING_KEY = "EDINET_API_KEY is not set, so EDINET cannot be queried."
+_ENV_READ = __import__("re").compile(
+    r"""os\s*\.\s*(?:getenv\s*\(|environ\s*\.\s*get\s*\(|environ\s*\[\s*)\s*(?:['\"]EDINET_API_KEY['\"]|API_KEY_ENV)"""
+)
+_EMPTY_LIST = json.dumps({
+    "metadata": {
+        "title": "empty",
+        "parameter": {"date": "2024-06-25", "type": "2"},
+        "resultset": {"count": 0},
+        "status": "200",
+        "message": "OK",
+    },
+    "results": [],
+}).encode()
+
+
+def _release_scope(scope, token):
+    if token is not None:
+        try:
+            scope.reset_secret_scope(token)
+        except ValueError:
+            pass
+    scope.set_secret_scope(None)
+    scope.set_multiplex_active(False)
+
+
+def _capture_key(monkeypatch, plugin):
+    seen = {}
+
+    def capture(path, params, api_key, resource="document"):
+        seen["key"] = api_key
+        seen["params"] = dict(params)
+        return _EMPTY_LIST
+
+    monkeypatch.setattr(plugin.client, "_http_get_bytes", capture)
+    monkeypatch.setattr(plugin.client, "MIN_REQUEST_INTERVAL_SECONDS", 0)
+    return seen
+
+
+@pytest.mark.needs_real_scope
+def test_scope_value_is_used_when_environ_differs(plugin, monkeypatch):
+    scope = pytest.importorskip("agent.secret_scope")
+    monkeypatch.setenv("EDINET_API_KEY", "env-key")
+    seen = _capture_key(monkeypatch, plugin)
+    token = scope.set_secret_scope({"EDINET_API_KEY": "scope-key"})
+    try:
+        plugin.client.fetch_documents_list("2024-06-25")
+    finally:
+        _release_scope(scope, token)
+    assert seen["key"] == "scope-key"
+    assert seen["params"].get("Subscription-Key") != "env-key"
+
+
+@pytest.mark.needs_real_scope
+def test_multiplex_scope_miss_does_not_read_environ(plugin, monkeypatch):
+    scope = pytest.importorskip("agent.secret_scope")
+    monkeypatch.setenv("EDINET_API_KEY", "env-key")
+    seen = _capture_key(monkeypatch, plugin)
+    scope.set_multiplex_active(True)
+    token = scope.set_secret_scope({"UNRELATED": "present"})
+    try:
+        raw = plugin.tools.HANDLERS["edinet_search_filings"]({
+            "sec_code": "7203",
+            "date_from": "2024-06-25",
+            "date_to": "2024-06-25",
+        })
+    finally:
+        _release_scope(scope, token)
+    body = json.loads(raw)
+    assert body["kind"] == "api_key_missing_or_invalid"
+    assert _MISSING_KEY in body["error"]
+    assert "env-key" not in raw
+    assert seen == {}
+
+
+@pytest.mark.needs_real_scope
+def test_unscoped_multiplex_raises(plugin, monkeypatch):
+    scope = pytest.importorskip("agent.secret_scope")
+    monkeypatch.setenv("EDINET_API_KEY", "env-key")
+    seen = _capture_key(monkeypatch, plugin)
+    scope.set_multiplex_active(True)
+    token = scope.set_secret_scope(None)
+    try:
+        with pytest.raises(scope.UnscopedSecretError):
+            plugin.tools.HANDLERS["edinet_search_filings"]({
+                "sec_code": "7203",
+                "date_from": "2024-06-25",
+                "date_to": "2024-06-25",
+            })
+    finally:
+        _release_scope(scope, token)
+    assert seen == {}
+
+
+@pytest.mark.needs_real_scope
+def test_unset_credentials_keep_the_fixed_error(plugin, monkeypatch):
+    scope = pytest.importorskip("agent.secret_scope")
+    monkeypatch.delenv("EDINET_API_KEY", raising=False)
+    cleared = scope.set_secret_scope(None)
+    scope.set_multiplex_active(False)
+    try:
+        raw = plugin.tools.HANDLERS["edinet_search_filings"]({
+            "sec_code": "7203",
+            "date_from": "2024-06-25",
+            "date_to": "2024-06-25",
+        })
+    finally:
+        _release_scope(scope, cleared)
+    body = json.loads(raw)
+    assert body["kind"] == "api_key_missing_or_invalid"
+    assert body["error"] == _MISSING_KEY
+
+
+def test_plugin_code_does_not_read_edinet_key_from_environ():
+    root = Path(__file__).resolve().parents[1]
+    for path in sorted(root.rglob("*.py")):
+        if "tests" in path.parts:
+            continue
+        text = path.read_text(encoding="utf-8")
+        assert _ENV_READ.search(text) is None, path.name
+
+
+def test_opener_ignores_https_proxy(plugin, monkeypatch):
+    import socket
+    import urllib.request
+
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.test:8443")
+    monkeypatch.setenv("https_proxy", "http://proxy.test:8443")
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.test:8443")
+    monkeypatch.setenv("http_proxy", "http://proxy.test:8443")
+    opener = plugin.client._build_opener()
+    targets = []
+
+    def blocked(address, *args, **kwargs):
+        targets.append(address)
+        raise OSError("blocked")
+
+    monkeypatch.setattr(socket, "create_connection", blocked)
+    request = urllib.request.Request("https://api.edinet-fsa.go.jp/api/v2/documents.json")
+    try:
+        opener.open(request, timeout=1)
+    except Exception:
+        pass
+    assert targets
+    hosts = [item[0] if isinstance(item, tuple) else item for item in targets]
+    assert hosts[0] == "api.edinet-fsa.go.jp"
+    assert "proxy.test" not in hosts
