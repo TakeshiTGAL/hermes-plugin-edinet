@@ -7,6 +7,7 @@ import io
 import os
 import re
 import tempfile
+import unicodedata
 import zipfile
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -126,7 +127,7 @@ def normalize_doc_id(doc_id: str) -> str:
 
     Letter case is normalized to uppercase (EDINET docIDs are case-insensitive in form).
     """
-    raw = (doc_id or "").strip().upper()
+    raw = unicodedata.normalize("NFKC", doc_id or "").strip().upper()
     if not raw:
         raise EdinetError(
             "doc_id is required.",

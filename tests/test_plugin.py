@@ -89,7 +89,12 @@ def test_schemas_first_sentence_says_what_tool_does(plugin):
     for schema in plugin.schemas.ALL_SCHEMAS:
         first = schema["description"].split(".")[0]
         assert len(first) >= 20
-        assert len(first) <= 120
+        assert len(first) <= 60
+        sentence = first + "."
+        lowered = sentence.lower()
+        assert not lowered.startswith("read-only")
+        assert not lowered.startswith("take no arguments")
+        assert not lowered.startswith("get /")
         params = schema["parameters"]
         assert params["type"] == "object"
         assert set(params["required"]) <= set(params["properties"])
@@ -1233,11 +1238,10 @@ def test_write_refuses_when_guard_unavailable(plugin, monkeypatch, _isolate_herm
     import sys
     import types
 
-    sys.modules.pop("agent.file_safety", None)
-    sys.modules.pop("agent", None)
-    agent_pkg = types.ModuleType("agent")
-    agent_pkg.__path__ = []  # package without file_safety submodule
-    sys.modules["agent"] = agent_pkg
+    # A Hermes checkout on sys.path reloads agent.file_safety after a pop.
+    # An empty module makes the import of get_write_denied_error fail closed.
+    previous_fs = sys.modules.get("agent.file_safety")
+    sys.modules["agent.file_safety"] = types.ModuleType("agent.file_safety")
     try:
         out = json.loads(
             plugin.tools.HANDLERS["edinet_save_document"]({"doc_id": "S100TR7I", "type": 2})
@@ -1249,8 +1253,10 @@ def test_write_refuses_when_guard_unavailable(plugin, monkeypatch, _isolate_herm
         docs = plugin.cache.docs_dir()
         assert list(docs.glob("*.pdf")) == []
     finally:
-        sys.modules.pop("agent.file_safety", None)
-        sys.modules.pop("agent", None)
+        if previous_fs is not None:
+            sys.modules["agent.file_safety"] = previous_fs
+        else:
+            sys.modules.pop("agent.file_safety", None)
 
 
 def test_write_guard_exception_is_access_denied(plugin, monkeypatch, _isolate_hermes_home):

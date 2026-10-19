@@ -24,7 +24,12 @@ class EdinetError(Exception):
         self.extra = dict(extra or {})
 
     def to_dict(self) -> dict[str, Any]:
-        out: dict[str, Any] = {"error": str(self), "kind": self.kind}
+        out: dict[str, Any] = {
+            "ok": False,
+            "error": str(self),
+            "kind": self.kind,
+            "error_type": self.kind,
+        }
         if self.next_step:
             out["next_step"] = self.next_step
         if self.status is not None:

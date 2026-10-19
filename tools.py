@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import json
 import re
+import unicodedata
 import time
 from datetime import date, datetime, timedelta
 from typing import Any, Iterable, Optional
@@ -62,8 +63,10 @@ def _guard(handler):
             detail = client.scrub(f"{type(error).__name__}: {error}")
             return _dump(
                 {
+                    "ok": False,
                     "error": f"Unexpected error in the EDINET plugin ({detail}).",
                     "kind": "internal_error",
+                    "error_type": "internal_error",
                     "next_step": "Retry with simpler arguments; report if it persists.",
                 }
             )
@@ -77,8 +80,8 @@ _CALENDAR_DAY = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
 
 
 def _parse_day(value: str, field: str) -> date:
-    """Accept only YYYY-MM-DD. Week dates and compact dates are not converted."""
-    text = (value or "").strip()
+    """YYYY-MM-DD, or the same digits with slashes, dots, or fullwidth numerals."""
+    text = unicodedata.normalize("NFKC", str(value or "")).strip().replace("/", "-").replace(".", "-")
     match = _CALENDAR_DAY.fullmatch(text)
     parsed: Optional[date] = None
     if match:
@@ -89,19 +92,19 @@ def _parse_day(value: str, field: str) -> date:
             parsed = None
     if parsed is None or parsed.isoformat() != text:
         raise EdinetError(
-            f"{field} must be YYYY-MM-DD (got {value!r}).",
+            f"{field} must be YYYY-MM-DD, for example 2024-06-25.",
             kind="bad_request",
             next_step=(
-                f"Pass {field} like 2024-06-25. "
-                "Week dates (2024-W26-2) and compact dates (20240625) are rejected."
+                f"Pass {field} as YYYY-MM-DD, for example 2024-06-25. "
+                "Week dates and compact dates such as 20240625 are rejected."
             ),
         )
     return parsed
 
 
 def _normalize_sec(code: str) -> str:
-    digits = re.sub(r"\D", "", code or "")
-    return digits
+    text = unicodedata.normalize("NFKC", code or "")
+    return re.sub(r"\D", "", text)
 
 
 def _sec_matches(doc_code: Optional[str], needle: str) -> bool:
@@ -268,7 +271,7 @@ def edinet_search_filings(args: dict) -> str:
         raise EdinetError(
             "The date range includes a future file date (JST).",
             kind="bad_request",
-            next_step="Set date_to to today or earlier (JST).",
+            next_step="Set date_to to today or earlier in JST, for example 2024-06-25.",
         )
 
     max_days, cap_warnings = _resolve_max_calendar_days(args)

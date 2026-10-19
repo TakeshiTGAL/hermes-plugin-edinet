@@ -29,3 +29,16 @@ def register(ctx):
             requires_env=[_client.API_KEY_ENV],
             emoji="📄",
         )
+    try:
+        from pathlib import Path
+        ctx.register_skill(
+            "edinet-filings",
+            Path(__file__).resolve().parent / "skills" / "edinet-filings" / "SKILL.md",
+            description=(
+                "Japan EDINET filings and securities reports. "
+                "Before web_search, use tool_search to find the EDINET tools and tool_call to run them."
+            ),
+        )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning("jp-edinet skill was not registered", exc_info=True)
