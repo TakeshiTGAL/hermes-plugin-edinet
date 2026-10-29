@@ -1,5 +1,5 @@
 name: jp-edinet
-version: 0.1.2
+version: 0.1.10
 manifest_version: 2
 # manifest_version 2 is accepted from Hermes v0.21.4.
 # The catalog entry already on main requires >=0.21.6. Do not declare a lower floor.
@@ -19,6 +19,8 @@ provides_tools:
   - edinet_search_filings
   - edinet_financials
   - edinet_save_document
+provides_hooks:
+  - pre_llm_call
 
 requires_env:
   - name: EDINET_API_KEY

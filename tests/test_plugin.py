@@ -309,6 +309,92 @@ def test_financials_toyota_operating_income_and_ocf(run):
     )
 
 
+def test_financials_toyota_five_consolidated_periods_do_not_fill_zero(run):
+    out = run("edinet_financials", {"doc_id": "S100TR7I"})
+    assert out["scope"] == "consolidated"
+    assert [row["period_id"] for row in out["periods"]] == [
+        "CurrentYear", "Prior1Year", "Prior2Year", "Prior3Year", "Prior4Year",
+    ]
+    assert out["periods"][0]["metrics"]["revenue"]["value"] == out["metrics"]["revenue"]["value"]
+    by_id = {row["period_id"]: row for row in out["periods"]}
+    assert by_id["CurrentYear"]["metrics"]["revenue"]["value"] == 45095325000000
+    assert by_id["Prior1Year"]["metrics"]["revenue"]["value"] == 37154298000000
+    assert by_id["Prior4Year"]["metrics"]["revenue"]["value"] == 29866547000000
+    assert by_id["Prior4Year"]["metrics"]["revenue"]["element_id"].endswith(
+        "OperatingRevenuesIFRSKeyFinancialData"
+    )
+    assert by_id["Prior2Year"]["metrics"]["operating_income"]["found"] is False
+    assert by_id["Prior2Year"]["metrics"]["operating_income"]["value"] is None
+    assert by_id["CurrentYear"]["metrics"]["revenue"]["unit"] == "円"
+    # Non-consolidated member rows exist in this zip and must not replace the headline.
+    assert "NonConsolidated" not in (by_id["Prior1Year"]["metrics"]["revenue"]["context_id"] or "")
+    for row in out["periods"]:
+        for name, item in row["metrics"].items():
+            if item.get("found") is False:
+                assert item.get("value") is None
+            elif name != "meaning":
+                assert item.get("value") != 0 or item.get("found") is True
+
+
+def test_financials_toyota_filing_company_is_a_second_series(run):
+    out = run("edinet_financials", {"doc_id": "S100TR7I"})
+    assert [row["period_id"] for row in out["filing_company"]] == [
+        "CurrentYear", "Prior1Year", "Prior2Year", "Prior3Year", "Prior4Year",
+    ]
+    by_id = {row["period_id"]: row for row in out["filing_company"]}
+    revenue = by_id["CurrentYear"]["metrics"]["revenue"]
+    assert revenue["value"] == 17575593000000
+    assert revenue["unit"] == "円"
+    assert revenue["element_id"] == "jppfs_cor:NetSales"
+    assert revenue["context_id"] == "CurrentYearDuration_NonConsolidatedMember"
+    assert by_id["Prior1Year"]["metrics"]["revenue"]["value"] == 14076956000000
+    assert by_id["CurrentYear"]["metrics"]["operating_income"]["value"] == 3094495000000
+    assert by_id["CurrentYear"]["metrics"]["net_income"]["value"] == 4399855000000
+    assert by_id["CurrentYear"]["metrics"]["net_income"]["element_id"] == "jppfs_cor:ProfitLoss"
+    assert by_id["CurrentYear"]["metrics"]["total_assets"]["value"] == 28161955000000
+    assert by_id["CurrentYear"]["metrics"]["net_assets"]["value"] == 20440081000000
+    assert by_id["CurrentYear"]["metrics"]["operating_cash_flow"]["found"] is False
+    assert by_id["CurrentYear"]["metrics"]["operating_cash_flow"]["value"] is None
+    assert by_id["CurrentYear"]["scope"] == "non_consolidated"
+    assert out["periods"][0]["metrics"]["revenue"]["value"] == 45095325000000
+    assert "NonConsolidated" not in (out["periods"][0]["metrics"]["revenue"]["context_id"] or "")
+    note = out["source"]["note"]
+    assert "45095325000000" in note
+    assert "17575593000000" in note
+    assert "not written as 0" in note
+    assert out["source"]["filing_page"] == (
+        "https://disclosure2.edinet-fsa.go.jp/WZEK0040.aspx?S100TR7I"
+    )
+
+
+def test_financials_prior_period_missing_is_not_zero(plugin):
+    import io
+    import zipfile
+
+    header = "要素ID\t項目名\tコンテキストID\t相対年度\t連結・個別\t期間・時点\tユニットID\t単位\t値\n"
+    body = (
+        "jpcrp_cor:NetSalesSummaryOfBusinessResults\t売上高\tCurrentYearDuration\t当期\t連結\t期間\t\t円\t1000\n"
+        "jpcrp_cor:NetSalesSummaryOfBusinessResults\t売上高\tPrior1YearDuration_NonConsolidatedMember\t前期\t個別\t期間\t\t円\t999999\n"
+        "jppfs_cor:NetSales\t売上高\tCurrentYearDuration_NonConsolidatedMember_CapitalStockMember\t当期\t個別\t期間\t\t円\t1\n"
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("XBRL_TO_CSV/one.csv", (header + body).encode("utf-16"))
+    out = plugin.metrics.extract_financials(buf.getvalue(), doc_id="S100TEST")
+    periods = {row["period_id"]: row for row in out["periods"]}
+    assert periods["CurrentYear"]["metrics"]["revenue"]["value"] == 1000
+    prior = periods["Prior1Year"]["metrics"]["revenue"]
+    assert prior["found"] is False
+    assert prior["value"] is None
+    assert periods["Prior4Year"]["metrics"]["revenue"]["value"] is None
+    filing = {row["period_id"]: row for row in out["filing_company"]}
+    assert filing["Prior1Year"]["metrics"]["revenue"]["value"] == 999999
+    assert filing["Prior1Year"]["metrics"]["revenue"]["unit"] == "円"
+    assert filing["CurrentYear"]["metrics"]["revenue"]["found"] is False
+    assert filing["CurrentYear"]["metrics"]["revenue"]["value"] is None
+    assert "999999" not in (periods["Prior1Year"]["metrics"]["revenue"]["message"] or "")
+
+
 def test_financials_nintendo_japan_gaap_operating_income(run):
     out = run("edinet_financials", {"doc_id": "S100TMMG"})
     assert out["accounting_standard"] == "Japan GAAP"
@@ -943,6 +1029,8 @@ def test_normalize_doc_id_uppercases(plugin):
 
 
 def test_doc_id_wrong_length_is_rejected_before_request(plugin, monkeypatch):
+    monkeypatch.setenv("EDINET_API_KEY", FAKE_API_KEY)
+
     def boom(*_args, **_kwargs):
         raise AssertionError("API was called")
 

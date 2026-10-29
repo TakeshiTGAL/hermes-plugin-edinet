@@ -1,3 +1,3 @@
 """Plugin version (kept in sync with plugin.yaml)."""
 
-__version__ = "0.1.2"
+__version__ = "0.1.10"

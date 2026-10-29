@@ -52,6 +52,9 @@ def _guard(handler):
     def wrapped(args, **kwargs):
         try:
             with client.budget():
+                # A missing key answers before date or doc-id checks, so a guessed
+                # file date is not treated as a search that ran.
+                client._api_key()
                 return handler(args or {})
         except ApiKeyError as error:
             return _dump(error.to_dict())

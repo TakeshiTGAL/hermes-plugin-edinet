@@ -50,8 +50,30 @@ API_KEY_STEPS = (
     "2) follow the linked API specification PDF for account creation and key issue; "
     f"3) set {API_KEY_ENV}=<your key> in the Hermes home .env (or paste it when "
     "`hermes plugins install` asks), then start a new session. "
-    f"Guide: {GUIDE_URL}"
+    f"Guide: {GUIDE_URL} "
+    "Without this key the consolidated six lines and the separate filing-company six lines "
+    "(revenue, operating income, net income, total assets, net assets, operating cash flow), "
+    "current period and up to four prior periods, stay empty. Each present line has its unit "
+    "and, once a document id is known, the EDINET filing URL. The free key fills those rows "
+    "from one yuho CSV. It does not fill gBizINFO rows."
 )
+
+
+def key_is_set() -> Optional[bool]:
+    """True when a key is configured. False when the helper reads an empty value.
+
+    None when the helper cannot be imported or read. None does not mean the key
+    is unset. The key itself is not returned.
+    """
+    try:
+        from agent.secret_scope import get_secret
+    except Exception:
+        return None
+    try:
+        value = get_secret(API_KEY_ENV)
+    except Exception:
+        return None
+    return bool((value or "").strip())
 
 
 def _api_key() -> str:
